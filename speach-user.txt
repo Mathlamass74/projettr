@@ -1,0 +1,80 @@
+Le User Front est un module Next.js (App Router) orienté feature, qui centralise toute l’expérience “compte utilisateur” autour de trois axes: profil, social graph, settings.
+
+Vue d’ensemble architecture
+Les routes /user/* sont enveloppées par un feature provider (UserProvider) via app/(user)/layout.tsx.
+Ce provider expose un store local piloté par hook (useUserData) via React Context.
+Le hook agrège et orchestre:
+état profil (profile),
+état social normalisé (friends, pendingReceived, pendingSent, blockedUsers),
+état notifications (notifications, unreadCount),
+état UX (isLoading, error, message).
+On est sur un pattern API layer + orchestration hook + composants de rendu:
+
+userApi.ts: wrappers réseau typés.
+useUserData.ts: logique métier front + séquencement mutations/refresh.
+UserProfile.tsx / UserSettings.tsx: composition UI + interactions utilisateur.
+Bootstrapping des données
+Au montage, useUserData déclenche refreshAll():
+
+GET /users/me
+GET /social?... puis normalisation des relations en listes métiers.
+GET /notification/user/:id puis filtrage/dédoublonnage des friend_request.
+Résultat: l’UI lit un state dérivé déjà prêt, sans logique réseau dans les composants.
+
+Couche sociale (friendship lifecycle)
+Le module implémente un state machine social côté UX:
+
+accepted, pending, blocked, rejected, null.
+Selon l’état relationnel (et le sens de la demande), le profil public affiche les CTAs adaptés:
+Accept/Reject, Cancel, Friend, Add friend, Block/Unblock.
+Toutes les mutations sociales utilisent un pattern cohérent:
+
+appel API,
+refresh social,
+refresh notifications (sauf block/unblock qui refresh social only),
+feedback UX via message.
+Notifications: cohérence fonctionnelle
+Les notifications sont traitées comme un flux distinct mais corrélé au social:
+
+popup dédiée dans l’onglet Friends,
+badge calculé avec agrégation métier:
+demandes entrantes non vues,
+notifications friend_* non lues (hors friend_request pour éviter double comptage).
+Dédoublonnage des demandes via metadata.friendId/requesterId + pending réel.
+Profil & stats
+UserProfile gère deux contextes:
+
+self profile (/user/profile),
+public profile (/user/profile/:id).
+Le composant calcule:
+
+visibilité des stats via flags backend (show_friends_count, compat legacy show_friend_count, show_canvas_count),
+compte amis et canvases (avec fallback et calls dédiés).
+rendu conditionnel de statut présence seulement si relation accepted.
+Settings
+UserSettings expose:
+
+update profil (display_name, bio, language, flags),
+update immédiat des toggles de visibilité,
+upload avatar avec validation client-side (limite taille),
+suppression de compte + logout.
+Auth integration
+Le module est connecté à AuthContext pour:
+
+synchroniser le statut utilisateur (online/offline) de manière silencieuse,
+exécuter le logout après deleteAccount.
+Robustesse & UX techniques
+Debounce recherche users (250ms),
+dedup par Map pour éviter doublons relationnels,
+gestion click-outside popup,
+auto-expiration des messages de succès,
+mapping d’erreurs HTTP vers messages user-friendly,
+404 recherche traité en [] (pas d’erreur bloquante UX).
+En résumé
+C’est une implémentation feature-centric, avec une séparation claire:
+
+transport/API typé,
+orchestration d’état métier,
+UI pilotée par état dérivé.
+Le module couvre tout le cycle utilisateur social (discover -> request -> accept/reject -> block/unblock -> notify), avec une cohérence de refresh et des garde-fous UX côté client.
+

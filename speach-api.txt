@@ -1,0 +1,90 @@
+L’API Gateway est le point d’entrée unique du backend. Son rôle n’est pas d’implémenter la logique métier, mais d’assurer l’orchestration de transport: routage HTTP/WS, CORS, TLS, et agrégation documentaire Swagger.
+
+Architecture gateway
+Le service est un NestJS minimal avec:
+
+un bootstrap custom dans main.ts,
+un module Nest (AppModule) + endpoint de santé agrégé,
+une couche proxy (http-proxy-middleware) qui route /api/* vers les microservices.
+Flux global:
+
+chargement des secrets runtime (Vault),
+démarrage HTTPS avec certificats locaux,
+résolution des upstreams (AUTH_SERVICE_URL, USERS_SERVICE_URL, etc.),
+montage des proxies docs + API + socket,
+activation CORS,
+exposition Swagger UI agrégée (hors production),
+écoute sur port gateway.
+Routage API (reverse proxy)
+Le gateway applique un path-based routing:
+
+/api/auth/* -> auth-service
+/api/users/*, /api/social/*, /api/notification/* -> users-service
+/api/canvas/*, /api/loop/* -> canvas-service
+/api/gallery/* -> gallery-service
+Avec pathRewrite, le préfixe /api est retiré avant forwarding.
+Exemple:
+
+client: GET /api/users/me
+upstream: GET /users/me
+Donc le gateway agit comme BFF transport/proxy, pas comme couche domaine.
+
+WebSocket / Socket.IO
+Le gateway proxy aussi le temps réel:
+
+route /socket.io,
+ws: true,
+handler explicite sur server.on('upgrade').
+Ça permet de garder un single ingress même pour les connexions realtime vers canvas-service.
+CORS et sécurité transport
+CORS est configuré avec:
+
+whitelist dynamique d’origines (CORS_ORIGINS ou fallback),
+callback d’autorisation par origin,
+credentials: true pour auth cookies.
+Côté TLS upstream:
+
+agent HTTPS avec rejectUnauthorized: false (contexte certs internes self-signed).
+Health-check agrégé
+GET /api/health est géré côté Nest (pas proxifié) et exécute des probes parallèles vers:
+
+auth
+users
+canvas
+gallery
+AI
+La réponse expose:
+
+statut global (ok ou degraded),
+statut détaillé par service (ok/down).
+Swagger: comment c’est fait
+Le gateway implémente une agrégation documentaire multi-services:
+
+UI: /api/docs
+JSON proxifiés:
+/api/docs-json/auth
+/api/docs-json/users
+/api/docs-json/canvas
+/api/docs-json/gallery
+Techniquement:
+
+SwaggerModule.setup('api/docs', ...) monte une UI gateway,
+swaggerOptions.urls déclare les specs distantes,
+chaque URL est servie via un proxy docsProxy(...).
+Résultat: un hub documentaire unique qui permet d’explorer toutes les APIs sans accéder directement aux services internes.
+
+Observabilité et comportement d’erreur
+Le proxy principal a des hooks:
+
+on.error: log console + append /tmp/proxy-error.txt,
+on.proxyRes: interception des réponses auth (notamment entêtes set-cookie).
+C’est une base de troubleshooting, sans couche avancée type tracing distribué.
+
+En résumé
+Le gateway est une control plane HTTP/WS légère:
+
+centralise l’exposition publique,
+conserve les frontières microservices,
+agrège la doc Swagger,
+fournit les politiques transverses (CORS/TLS/routage),
+laisse toute la logique métier dans les services domaines.
